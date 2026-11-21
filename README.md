@@ -9,7 +9,7 @@ professional replies to customer complaints.
 - CSV parsing and cleaning, including UTF-8 BOM, multiline text, HTML, and
   Unicode reviews.
 - Duplicate detection, rating validation, and an upload quality report.
-- Gemini-powered sentiment, topic, summary, and reply analysis.
+- Gemini 3.5 Flash-Lite sentiment, topic, summary, and reply analysis.
 - Structured LLM output validation, bounded retries, and untrusted-review
   prompt boundaries.
 - SQLite persistence for uploads, review results, reply suggestions, and
@@ -19,7 +19,7 @@ professional replies to customer complaints.
 
 ## Requirements
 
-- Node.js `^20.19.0` or `>=22.12.0`
+- Node.js 22.13 or later
 - npm
 - Gemini API key for LLM analysis and reply generation
 
@@ -95,6 +95,20 @@ the configured `PROMPT_VERSION` has not changed.
 
 The API key is used only by the backend and is never sent to the browser.
 
+## Run with Docker
+
+Docker Desktop with the Compose plugin is required. Add `GEMINI_API_KEY` to
+the repository-root `.env` file if you want LLM analysis, then run:
+
+```powershell
+docker compose up --build
+```
+
+Open `http://localhost:5173`. Nginx serves the dashboard and proxies API
+requests to the backend. Review data and the analysis cache persist in the
+`reviewlens-data` volume. Use `docker compose down -v` only when you intend to
+remove that stored data.
+
 ## Tests and build
 
 ```powershell
@@ -144,4 +158,3 @@ reviewlens/
 - Analysis and reply generation incur Gemini API usage and are subject to
   provider quotas and availability.
 - Only Gemini is implemented as an LLM provider.
-- Docker deployment is being completed as part of release hardening.

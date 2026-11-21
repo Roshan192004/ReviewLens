@@ -15,7 +15,7 @@ export const BACKOFF = {
 export const CONFIG = {
   // ── LLM ──────────────────────────────────────────────────────────────────
   PROMPT_VERSION: "v2",          // bump when the analysis prompt changes
-  MODEL_NAME: "gemini-1.5-flash",
+  MODEL_NAME: "gemini-3.5-flash-lite",
   TEMPERATURE: 0,                // deterministic output
 
   // ── Batching & retries ───────────────────────────────────────────────────

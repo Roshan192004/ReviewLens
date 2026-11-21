@@ -1,19 +1,16 @@
-version: "3.9"
-
 services:
   backend:
     build:
-      context: ./backend
-      dockerfile: Dockerfile
-    ports:
-      - "4000:4000"
+      context: .
+      dockerfile: backend/Dockerfile
     environment:
-      - GEMINI_API_KEY=${GEMINI_API_KEY}
-      - GROQ_API_KEY=${GROQ_API_KEY}
-      - PORT=4000
-      - CACHE_DB_PATH=/data/cache.db
+      GEMINI_API_KEY: ${GEMINI_API_KEY:-}
+      PORT: "4000"
+      CACHE_DB_PATH: /data/reviewlens.db
+    expose:
+      - "4000"
     volumes:
-      - cache-data:/data
+      - reviewlens-data:/data
 
   frontend:
     build:
@@ -22,14 +19,8 @@ services:
     ports:
       - "5173:80"
     depends_on:
-      - backend
+      backend:
+        condition: service_healthy
 
 volumes:
-  cache-data:
-
-# Usage:
-#   export GEMINI_API_KEY=your_key   (or GROQ_API_KEY)
-#   docker compose up --build
-#
-# Dockerfiles are stubbed – completed in Phase 12.
-
+  reviewlens-data:

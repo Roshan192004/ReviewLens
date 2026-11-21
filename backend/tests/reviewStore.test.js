@@ -1,11 +1,14 @@
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
-import Database from "better-sqlite3";
+import { mkdtempSync, rmSync } from "node:fs";
+import { DatabaseSync } from "node:sqlite";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import { createReviewStore } from "../src/services/reviewStore.js";
 
 describe("reviewStore", () => {
   let store;
   beforeEach(() => {
-    store = createReviewStore(new Database(":memory:"));
+    store = createReviewStore(new DatabaseSync(":memory:"));
   });
   afterEach(() => {
     store.close();
@@ -72,5 +75,36 @@ describe("reviewStore", () => {
     const saved = store.saveReply("upload-2", "R2", "We're sorry to hear that.");
     expect(saved.reply).toBe("We're sorry to hear that.");
     expect(store.getReply("upload-2", "R2")).toEqual(saved);
+  });
+
+  it("retains upload results after reopening the SQLite database", () => {
+    const directory = mkdtempSync(join(tmpdir(), "reviewlens-test-"));
+    let activeStore;
+    try {
+      activeStore = createReviewStore(new DatabaseSync(join(directory, "reviews.db")));
+      activeStore.saveUpload({
+        upload_id: "persistent-upload",
+        filename: "reviews.csv",
+        report: { total_rows: 1 },
+        stats: { analysed: 1 },
+        reviews: [{
+          review_id: "R3",
+          product: "Watch",
+          rating: 4,
+          date: "2024-01-03",
+          text: "Still working.",
+          status: "analysed",
+          analysis: { sentiment: "positive", topics: ["quality"] },
+        }],
+      });
+      activeStore.close();
+
+      activeStore = createReviewStore(new DatabaseSync(join(directory, "reviews.db")));
+      expect(activeStore.getUpload("persistent-upload").reviews[0].text)
+        .toBe("Still working.");
+    } finally {
+      if (activeStore) activeStore.close();
+      rmSync(directory, { recursive: true, force: true });
+    }
   });
 });

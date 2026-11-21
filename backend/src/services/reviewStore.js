@@ -1,6 +1,6 @@
 import { randomUUID } from "node:crypto";
 import { mkdirSync } from "node:fs";
-import Database from "better-sqlite3";
+import { DatabaseSync } from "node:sqlite";
 import { dirname, isAbsolute, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { CONFIG } from "../config.js";
@@ -20,7 +20,7 @@ function openDatabase() {
     mkdirSync(dirname(databasePath), { recursive: true });
   }
 
-  return new Database(databasePath);
+  return new DatabaseSync(databasePath);
 }
 
 function cacheKey(text) {
@@ -41,7 +41,7 @@ function parseUpload(row, reviews) {
 
 export function createReviewStore(database = openDatabase()) {
   const db = database;
-  db.pragma("foreign_keys = ON");
+  db.exec("PRAGMA foreign_keys = ON");
   db.exec(`
     CREATE TABLE IF NOT EXISTS uploads (
       id TEXT PRIMARY KEY,
@@ -141,47 +141,55 @@ export function createReviewStore(database = openDatabase()) {
     return parseUpload(upload, reviews);
   }
 
-  const saveUploadTransaction = db.transaction((upload) => {
-    insertUpload.run({
-      id: upload.upload_id,
-      filename: upload.filename,
-      created_at: upload.created_at || new Date().toISOString(),
-      report_json: JSON.stringify(upload.report),
-      stats_json: JSON.stringify(upload.stats),
-    });
-
-    const uploadId = upload.upload_id;
-    for (const [index, review] of upload.reviews.entries()) {
-      const analysisJson = review.analysis ? JSON.stringify(review.analysis) : null;
-      insertReview.run({
-        upload_id: uploadId,
-        row_index: index,
-        review_id: review.review_id,
-        product: review.product,
-        rating: review.rating,
-        rating_issue: review.rating_issue,
-        date: review.date,
-        text: review.text,
-        text_hash: review.text_hash,
-        status: review.status,
-        skip_reason: review.skip_reason,
-        duplicate_of: review.duplicate_of,
-        id_issue: review.id_issue,
-        analysis_json: analysisJson,
-        error: review.error,
-        suspicious_input: review.suspicious_input ? 1 : 0,
+  function saveUploadTransaction(upload) {
+    db.exec("BEGIN IMMEDIATE");
+    try {
+      insertUpload.run({
+        id: upload.upload_id,
+        filename: upload.filename,
+        created_at: upload.created_at,
+        report_json: JSON.stringify(upload.report),
+        stats_json: JSON.stringify(upload.stats),
       });
 
-      if (review.status === "analysed" && analysisJson && review.text_hash) {
-        insertCache.run({
-          cache_key: cacheKey(review.text),
+      const uploadId = upload.upload_id;
+      for (const [index, review] of upload.reviews.entries()) {
+        const analysisJson = review.analysis ? JSON.stringify(review.analysis) : null;
+        insertReview.run({
+          upload_id: uploadId,
+          row_index: index,
+          review_id: review.review_id,
+          product: review.product,
+          rating: review.rating,
+          rating_issue: review.rating_issue,
+          date: review.date,
+          text: review.text,
+          text_hash: review.text_hash,
+          status: review.status,
+          skip_reason: review.skip_reason,
+          duplicate_of: review.duplicate_of,
+          id_issue: review.id_issue,
           analysis_json: analysisJson,
+          error: review.error,
           suspicious_input: review.suspicious_input ? 1 : 0,
-          created_at: upload.created_at || new Date().toISOString(),
         });
+
+        if (review.status === "analysed" && analysisJson && review.text_hash) {
+          insertCache.run({
+            cache_key: cacheKey(review.text),
+            analysis_json: analysisJson,
+            suspicious_input: review.suspicious_input ? 1 : 0,
+            created_at: upload.created_at,
+          });
+        }
       }
+
+      db.exec("COMMIT");
+    } catch (error) {
+      db.exec("ROLLBACK");
+      throw error;
     }
-  });
+  }
 
   return {
     close() {

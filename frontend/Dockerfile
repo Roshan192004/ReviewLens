@@ -1,12 +1,13 @@
-FROM node:20-alpine AS builder
+FROM node:22-bookworm-slim AS builder
+
 WORKDIR /app
 COPY package*.json ./
 RUN npm ci
-COPY . .
+COPY index.html vite.config.js ./
+COPY src ./src
 RUN npm run build
 
 FROM nginx:alpine
+COPY nginx.conf /etc/nginx/conf.d/default.conf
 COPY --from=builder /app/dist /usr/share/nginx/html
-# Phase 12: add nginx.conf to proxy /api → backend:4000
 EXPOSE 80
-

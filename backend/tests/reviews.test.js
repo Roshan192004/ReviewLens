@@ -1,5 +1,5 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import Database from "better-sqlite3";
+import { DatabaseSync } from "node:sqlite";
 import request from "supertest";
 import { createApp } from "../src/server.js";
 import { createReviewStore } from "../src/services/reviewStore.js";
@@ -15,7 +15,7 @@ describe("review API", () => {
   let createReply;
 
   beforeEach(() => {
-    store = createReviewStore(new Database(":memory:"));
+    store = createReviewStore(new DatabaseSync(":memory:"));
     createReply = vi.fn().mockResolvedValue("We're sorry the earbud stopped working.");
     app = createApp({
       store,
@@ -58,6 +58,14 @@ describe("review API", () => {
     expect(byId.body.upload_id).toBe(uploadId);
     expect(byId.body.reviews[0].analysis.sentiment).toBe("negative");
     expect(latest.body.upload_id).toBe(uploadId);
+  });
+
+  it("serves the sample CSV download", async () => {
+    const response = await request(app).get("/api/sample.csv");
+
+    expect(response.status).toBe(200);
+    expect(response.headers["content-type"]).toMatch(/text\/csv/);
+    expect(response.text).toContain("review_id,product,rating,date,review_text");
   });
 
   it("generates a reply once and returns the persisted suggestion thereafter", async () => {

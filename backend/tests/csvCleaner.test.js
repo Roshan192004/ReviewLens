@@ -3,9 +3,9 @@
 
 import { afterEach, beforeEach, describe, it, expect, vi } from "vitest";
 import { readFileSync } from "node:fs";
+import { DatabaseSync } from "node:sqlite";
 import { resolve, dirname } from "node:path";
 import { fileURLToPath } from "node:url";
-import Database from "better-sqlite3";
 import request from "supertest";
 import { createApp } from "../src/server.js";
 import { parseCsv, cleanReviews } from "../src/services/csvCleaner.js";
@@ -249,7 +249,7 @@ describe("POST /api/upload endpoint", () => {
   let analyze;
 
   beforeEach(() => {
-    store = createReviewStore(new Database(":memory:"));
+    store = createReviewStore(new DatabaseSync(":memory:"));
     analyze = vi.fn(async (reviews) => ({
       results: reviews.map((review) => ({
         review_id: review.review_id,
