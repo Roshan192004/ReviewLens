@@ -1,75 +1,115 @@
 # ReviewLens
 
-ReviewLens is an early-stage product-review analysis project. Its current
-working feature accepts a CSV upload, cleans and validates review rows, detects
-duplicate review text, and returns a cleaning report from an Express API.
+ReviewLens turns product-review CSV files into persisted sentiment and topic
+insights. Upload reviews, explore the results by sentiment or keyword, and draft
+professional replies to customer complaints.
 
-The repository also contains isolated LLM analysis, batching, retry, and output
-validation modules. They are not yet connected to the upload endpoint. The
-React frontend and production Docker setup are not implemented yet.
+## Features
 
-## Current features
-
-- Parses CSV files with UTF-8 BOM and quoted multiline fields.
-- Requires `review_id`, `product`, `rating`, `date`, and `review_text` columns.
-- Cleans HTML and whitespace, preserves Unicode and emoji, and reports missing
-  or invalid ratings.
-- Flags empty reviews and duplicate normalized text.
-- Limits CSV uploads to 2 MB.
-- Provides unit and API tests for CSV cleaning, LLM analysis helpers, response
-  validation, batching, and retry behavior.
+- CSV parsing and cleaning, including UTF-8 BOM, multiline text, HTML, and
+  Unicode reviews.
+- Duplicate detection, rating validation, and an upload quality report.
+- Gemini-powered sentiment, topic, summary, and reply analysis.
+- Structured LLM output validation, bounded retries, and untrusted-review
+  prompt boundaries.
+- SQLite persistence for uploads, review results, reply suggestions, and
+  prompt-versioned analysis caching.
+- Responsive React dashboard with sentiment summaries, search, filters, and
+  analysis status reporting.
 
 ## Requirements
 
-- Node.js 20 or later
+- Node.js `^20.19.0` or `>=22.12.0`
 - npm
-- A Gemini API key is only needed when calling the LLM analysis client; the
-  current upload endpoint does not invoke it.
+- Gemini API key for LLM analysis and reply generation
 
-## Run the backend
+The backend and dashboard can start without an API key, but analysis requests
+will be recorded as failed until `GEMINI_API_KEY` is configured.
 
-From the repository root, install and start the backend:
+## Run locally
+
+Copy `.env.example` to `.env` at the repository root and add your Gemini API
+key. Never commit the real `.env` file.
+
+```powershell
+Copy-Item .env.example .env
+```
+
+In the first terminal:
 
 ```powershell
 Set-Location backend
-npm install
+npm ci
 npm run dev
 ```
 
-The API listens on `http://localhost:4000` by default.
-
-### Upload a CSV
-
-Send a `multipart/form-data` request to `POST /api/upload` with the CSV in the
-`file` field. For example, from PowerShell:
+In a second terminal:
 
 ```powershell
-curl.exe -F "file=@..\data\reviews.csv" http://localhost:4000/api/upload
+Set-Location frontend
+npm ci
+npm run dev
 ```
 
-The response contains the cleaned `reviews` and a `report` with row, duplicate,
-skip, and rating counts. The endpoint does not call an LLM.
+Open `http://localhost:5173`. The dashboard includes a download link to
+`data/reviews.csv`, a 30-row sample dataset. The Vite development server proxies
+API requests to the backend at `http://localhost:4000`.
 
-## Run tests
+## CSV format
+
+The CSV header must contain these columns:
+
+```csv
+review_id,product,rating,date,review_text
+```
+
+Each `review_id` must be unique within an upload. Ratings may be blank or
+integers from 1 to 5. Uploads are limited to 2 MB. Empty review text is skipped;
+normalized duplicate text is reported and analyzed only once.
+
+## API
+
+All responses are JSON except the sample CSV download. Errors use
+`{ "error": "..." }`.
+
+| Method | Path | Description |
+|---|---|---|
+| `POST` | `/api/upload` | Upload one CSV as multipart field `file`; returns persisted reviews, cleaning report, and analysis stats. |
+| `GET` | `/api/reviews` | Return the most recently uploaded review set. |
+| `GET` | `/api/reviews?uploadId=<id>` | Retrieve a specific upload. |
+| `POST` | `/api/reviews/:reviewId/reply` | Generate or retrieve a saved reply; JSON body: `{ "upload_id": "<id>" }`. |
+| `GET` | `/api/sample.csv` | Download the sample CSV. |
+
+An upload returns `201` once its results are saved. Individual LLM failures are
+returned on the affected review as `analysis_failed`; successful results remain
+available. Re-uploading the same review text reuses a successful analysis when
+the configured `PROMPT_VERSION` has not changed.
+
+## Configuration
+
+| Variable | Required | Default | Description |
+|---|---|---|---|
+| `GEMINI_API_KEY` | For LLM analysis/replies | — | Google Gemini API key |
+| `PORT` | No | `4000` | Backend listen port |
+| `CACHE_DB_PATH` | No | `cache.db` | SQLite database path; relative paths resolve from `backend/` |
+
+The API key is used only by the backend and is never sent to the browser.
+
+## Tests and build
 
 ```powershell
 Set-Location backend
 npm test
 ```
 
-The tests use mocked LLM calls and do not require a live API key. The frontend
-package currently has build dependencies declared, but no app entry point or UI
-exists yet, so its build is not available.
+```powershell
+Set-Location frontend
+npm run build
+```
 
-## Configuration
-
-| Variable | Required | Default | Description |
-|---|---|---|---|
-| `GEMINI_API_KEY` | Only for LLM analysis | — | Google Gemini API key |
-| `PORT` | No | `4000` | Express server port |
-
-Keep real credentials in `.env`; do not commit them. `.env.example` contains
-only a placeholder.
+Backend tests cover CSV cleaning, upload and retrieval APIs, persistence and
+caching, LLM output validation, retries, and reply generation using mocked
+providers. Tests do not require a live Gemini key.
 
 ## Project structure
 
@@ -78,39 +118,30 @@ reviewlens/
 ├── backend/
 │   ├── src/
 │   │   ├── prompts/       # Analysis prompts and untrusted-input handling
-│   │   ├── routes/        # Current CSV upload endpoint
-│   │   ├── schema/        # Zod analysis schemas
-│   │   ├── services/      # CSV cleaning, LLM analysis, validation, batching
-│   │   ├── utils/         # Backoff and text hashing
-│   │   └── server.js      # Express entry point
-│   ├── tests/             # Vitest unit and API tests
+│   │   ├── routes/        # Upload and review/reply API routes
+│   │   ├── schema/        # Zod schemas for model responses
+│   │   ├── services/      # Analysis, CSV cleaning, replies, and SQLite store
+│   │   └── utils/         # Backoff and text hashing
+│   ├── tests/             # Vitest unit and API integration tests
 │   └── package.json
 ├── data/
-│   └── reviews.csv        # Small sample dataset
+│   └── reviews.csv        # Sample dataset
 ├── frontend/
-│   ├── src/               # Empty scaffolding; UI is not implemented
+│   ├── src/
+│   │   ├── api/           # Backend fetch client
+│   │   ├── App.jsx        # Upload and analysis dashboard
+│   │   └── styles.css     # Responsive styles
 │   └── package.json
 ├── .env.example
 ├── .gitignore
-└── docker-compose.yml     # Draft; container workflow is not complete
+└── docker-compose.yml
 ```
 
-## Development roadmap
+## Limitations
 
-1. **Core API and data flow:** connect CSV upload to validated LLM analysis,
-   define consistent analysis results, and test the end-to-end backend flow.
-2. **User-facing features:** build the React upload and results experience,
-   connect it to the API, and add review filtering and product summaries.
-3. **Release readiness:** complete persistence and error handling, make Docker
-   deployment reproducible, expand integration coverage, and document verified
-   setup and limitations.
-
-## Known limitations
-
-- Only `POST /api/upload` is implemented; there are no review-list or reply
-  endpoints.
-- Upload currently cleans CSV data but does not invoke the LLM analysis
-  services.
-- There is no frontend UI, persistent review store, or authentication.
-- Dockerfiles and Compose configuration are drafts and have not been verified.
-- The Gemini client is the only implemented provider; Groq is not supported.
+- Authentication and tenant isolation are not implemented. Do not expose this
+  service publicly with sensitive customer data.
+- Analysis and reply generation incur Gemini API usage and are subject to
+  provider quotas and availability.
+- Only Gemini is implemented as an LLM provider.
+- Docker deployment is being completed as part of release hardening.

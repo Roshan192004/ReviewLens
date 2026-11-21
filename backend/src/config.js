@@ -1,5 +1,5 @@
 // Central configuration – import this wherever you need a constant.
-// Changing PROMPT_VERSION invalidates all cached LLM results (see cache.js).
+// Changing PROMPT_VERSION invalidates cached LLM results (see reviewStore.js).
 
 export const SENTIMENTS = ["positive", "neutral", "negative"];
 export const TOPICS = ["quality", "delivery", "price", "packaging", "support", "size_fit", "other"];
@@ -15,7 +15,7 @@ export const BACKOFF = {
 export const CONFIG = {
   // ── LLM ──────────────────────────────────────────────────────────────────
   PROMPT_VERSION: "v2",          // bump when the analysis prompt changes
-  MODEL_NAME: "gemini-1.5-flash",// overridden by llmClient if provider is Groq
+  MODEL_NAME: "gemini-1.5-flash",
   TEMPERATURE: 0,                // deterministic output
 
   // ── Batching & retries ───────────────────────────────────────────────────

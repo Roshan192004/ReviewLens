@@ -15,6 +15,13 @@ export function createApp({ store, analyze, createReply } = {}) {
   app.use(express.json({ limit: "32kb" }));
   app.use("/api/upload", createUploadRouter({ store, analyze }));
   app.use("/api/reviews", createReviewsRouter({ store, createReply }));
+  app.get("/api/sample.csv", (_req, res, next) => {
+    const samplePath = resolve(
+      dirname(fileURLToPath(import.meta.url)),
+      "../../data/reviews.csv",
+    );
+    res.sendFile(samplePath, { headers: { "Content-Type": "text/csv" } }, next);
+  });
 
   app.use((req, res) => {
     res.status(404).json({ error: "API endpoint not found." });
