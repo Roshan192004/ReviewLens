@@ -63,10 +63,11 @@ export async function analyzeReviews(
   const results = input.map((review) => {
     if (review?.status !== "pending") return { ...review };
     const id = review.review_id;
-    if (resultById.has(id)) return resultById.get(id);
+    if (resultById.has(id)) return { ...review, ...resultById.get(id) };
 
     failed++;
     return {
+      ...review,
       review_id: id,
       status: "analysis_failed",
       analysis: null,

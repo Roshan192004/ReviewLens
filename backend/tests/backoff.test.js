@@ -98,5 +98,6 @@ describe("withBackoff", () => {
     expect(isRetryable({ status: 500 })).toBe(true);
     expect(isRetryable({ status: 400 })).toBe(false);
     expect(isRetryable({ status: 401 })).toBe(false);
+    expect(isRetryable({ status: 500, code: "MISSING_API_KEY" })).toBe(false);
   });
 });

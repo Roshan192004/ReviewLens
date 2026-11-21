@@ -1,38 +1,34 @@
-// POST /api/upload
-// Accepts a CSV file (multipart field "file"), cleans it, and returns the
-// cleaned reviews plus a cleaning report. No LLM calls happen here.
-
+import { randomUUID } from "node:crypto";
 import { Router } from "express";
 import multer from "multer";
-import { parseCsv, cleanReviews } from "../services/csvCleaner.js";
 import { CONFIG } from "../config.js";
+import { analyzeReviews } from "../services/batchRunner.js";
+import { cleanReviews, parseCsv } from "../services/csvCleaner.js";
+import { getReviewStore } from "../services/reviewStore.js";
 
-const router = Router();
+export function createUploadRouter({
+  analyze = analyzeReviews,
+  store,
+} = {}) {
+  const router = Router();
+  const upload = multer({
+    storage: multer.memoryStorage(),
+    limits: { fileSize: CONFIG.MAX_UPLOAD_BYTES },
+    fileFilter(_req, file, callback) {
+      if (!file.originalname.toLowerCase().endsWith(".csv")) {
+        const error = new Error("Only .csv files are accepted.");
+        error.status = 400;
+        return callback(error);
+      }
+      callback(null, true);
+    },
+  });
 
-// ── Multer setup ─────────────────────────────────────────────────────────────
-// memoryStorage keeps the file in RAM (fine for the 2 MB limit).
-// The size limit rejects oversized uploads before they hit our code.
-const upload = multer({
-  storage: multer.memoryStorage(),
-  limits: { fileSize: CONFIG.MAX_UPLOAD_BYTES },
-  fileFilter(_req, file, cb) {
-    // Accept only files whose original name ends with .csv
-    if (!file.originalname.toLowerCase().endsWith(".csv")) {
-      return cb(new Error("Only .csv files are accepted."));
-    }
-    cb(null, true);
-  },
-});
-
-// ── Route ─────────────────────────────────────────────────────────────────────
-// single("file") means we expect exactly one file in the "file" field.
-router.post(
-  "/",
-  upload.single("file"),
-  (req, res) => {
-    // Multer puts the file on req.file; if the field is absent it is undefined.
+  router.post("/", upload.single("file"), async (req, res, next) => {
     if (!req.file) {
-      return res.status(400).json({ error: "No file uploaded. Send a CSV in the 'file' field." });
+      return res.status(400).json({
+        error: "No file uploaded. Send a CSV in the 'file' field.",
+      });
     }
 
     if (req.file.size === 0) {
@@ -41,30 +37,90 @@ router.post(
 
     let rows;
     try {
-      // parseCsv throws a plain Error for bad CSV or missing columns.
       rows = parseCsv(req.file.buffer);
-    } catch (err) {
-      return res.status(400).json({ error: err.message });
+    } catch (error) {
+      return res.status(400).json({ error: error.message });
     }
 
-    // cleanReviews is pure – it never throws; bad rows get status "skipped".
-    const { reviews, report } = cleanReviews(rows);
+    const cleaned = cleanReviews(rows);
+    const ids = new Set();
+    for (const review of cleaned.reviews) {
+      if (ids.has(review.review_id)) {
+        return res.status(400).json({
+          error: `Duplicate review_id "${review.review_id}". Each review must have a unique ID.`,
+        });
+      }
+      ids.add(review.review_id);
+    }
 
-    return res.status(200).json({ reviews, report });
-  }
-);
+    try {
+      const activeStore = store || getReviewStore();
+      const cached = activeStore.getCachedAnalyses(cleaned.reviews);
+      const uncached = cleaned.reviews.filter(
+        (review) => review.status === "pending" && !cached.has(review.review_id),
+      );
+      const analysisRun = uncached.length
+        ? await analyze(uncached)
+        : {
+            results: [],
+            stats: {
+              llmCalls: 0,
+              transportRetries: 0,
+              batches: 0,
+              analysed: 0,
+              failed: 0,
+              durationMs: 0,
+            },
+          };
+      const analyzedById = new Map(
+        analysisRun.results.map((result) => [result.review_id, result]),
+      );
+      const reviews = cleaned.reviews.map((review) => {
+        if (review.status !== "pending") return review;
 
-// ── Multer error handler ──────────────────────────────────────────────────────
-// Multer signals its own errors (wrong type, oversized file) via next(err).
-// We catch them here and return a consistent JSON 400 instead of Express's
-// default HTML error page.
-router.use((err, _req, res, _next) => {
-  if (err instanceof multer.MulterError) {
-    return res.status(400).json({ error: `Upload error: ${err.message}` });
-  }
-  // fileFilter rejection comes through as a plain Error
-  return res.status(400).json({ error: err.message });
-});
+        const cachedResult = cached.get(review.review_id);
+        if (cachedResult) {
+          return {
+            ...review,
+            status: "analysed",
+            analysis: cachedResult.analysis,
+            error: null,
+            suspicious_input: cachedResult.suspicious_input,
+          };
+        }
 
-export default router;
+        const analysis = analyzedById.get(review.review_id);
+        return analysis
+          ? { ...review, ...analysis }
+          : {
+              ...review,
+              status: "analysis_failed",
+              analysis: null,
+              error: "No analysis result was returned for this review.",
+              suspicious_input: false,
+            };
+      });
+      const stats = {
+        ...analysisRun.stats,
+        analysed: reviews.filter((review) => review.status === "analysed").length,
+        failed: reviews.filter((review) => review.status === "analysis_failed").length,
+        cacheHits: cached.size,
+      };
+      const saved = activeStore.saveUpload({
+        upload_id: randomUUID(),
+        filename: req.file.originalname,
+        report: cleaned.report,
+        stats,
+        reviews,
+      });
 
+      return res.status(201).json(saved);
+    } catch (error) {
+      return next(error);
+    }
+  });
+
+  return router;
+}
+
+export default createUploadRouter;

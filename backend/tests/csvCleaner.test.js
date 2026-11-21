@@ -1,13 +1,15 @@
 // Tests for csvCleaner.js and the /api/upload route.
 // Run with: npm test (Vitest)
 
-import { describe, it, expect } from "vitest";
+import { afterEach, beforeEach, describe, it, expect, vi } from "vitest";
 import { readFileSync } from "node:fs";
 import { resolve, dirname } from "node:path";
 import { fileURLToPath } from "node:url";
+import Database from "better-sqlite3";
 import request from "supertest";
-import app from "../src/server.js";
+import { createApp } from "../src/server.js";
 import { parseCsv, cleanReviews } from "../src/services/csvCleaner.js";
+import { createReviewStore } from "../src/services/reviewStore.js";
 import { normalizeText, hashText } from "../src/utils/hash.js";
 
 const __dir = dirname(fileURLToPath(import.meta.url));
@@ -242,19 +244,69 @@ describe("hash utils", () => {
 
 // ─── 9. Upload Route HTTP Tests (supertest) ──────────────────────────────────
 describe("POST /api/upload endpoint", () => {
-  it("responds 200 with reviews and report for real reviews.csv", async () => {
+  let store;
+  let app;
+  let analyze;
+
+  beforeEach(() => {
+    store = createReviewStore(new Database(":memory:"));
+    analyze = vi.fn(async (reviews) => ({
+      results: reviews.map((review) => ({
+        review_id: review.review_id,
+        status: "analysed",
+        analysis: {
+          sentiment: "positive",
+          topics: ["quality"],
+          summary: "A positive review.",
+          needs_reply: false,
+        },
+        error: null,
+        suspicious_input: false,
+      })),
+      stats: {
+        llmCalls: 1,
+        transportRetries: 0,
+        batches: 1,
+        analysed: reviews.length,
+        failed: 0,
+        durationMs: 1,
+      },
+    }));
+    app = createApp({ store, analyze });
+  });
+
+  afterEach(() => store.close());
+
+  it("analyzes, stores, and returns real reviews.csv", async () => {
     const filePath = resolve(__dir, "../../data/reviews.csv");
     const res = await request(app)
       .post("/api/upload")
       .attach("file", filePath);
 
-    expect(res.status).toBe(200);
+    expect(res.status).toBe(201);
+    expect(res.body.upload_id).toMatch(/^[0-9a-f-]{36}$/i);
     expect(res.body).toHaveProperty("reviews");
     expect(res.body).toHaveProperty("report");
+    expect(res.body).toHaveProperty("stats");
     expect(res.body.report.total_rows).toBe(30);
     expect(res.body.report.valid).toBe(28);
     expect(res.body.report.skipped).toBe(1);
     expect(res.body.report.duplicates).toBe(1);
+    expect(res.body.reviews.find((review) => review.review_id === "R001").analysis.sentiment)
+      .toBe("positive");
+    expect(res.body.reviews.find((review) => review.review_id === "R005").status)
+      .toBe("skipped");
+    expect(analyze).toHaveBeenCalledOnce();
+  });
+
+  it("uses the analysis cache when the same CSV is uploaded again", async () => {
+    const filePath = resolve(__dir, "../../data/reviews.csv");
+    await request(app).post("/api/upload").attach("file", filePath);
+    const second = await request(app).post("/api/upload").attach("file", filePath);
+
+    expect(second.status).toBe(201);
+    expect(second.body.stats.cacheHits).toBe(28);
+    expect(analyze).toHaveBeenCalledOnce();
   });
 
   it("responds 400 when no file is uploaded", async () => {
@@ -286,5 +338,20 @@ describe("POST /api/upload endpoint", () => {
     expect(res.status).toBe(400);
     expect(res.body).toHaveProperty("error");
     expect(res.body.error).toMatch(/Only \.csv files are accepted/i);
+  });
+
+  it("rejects duplicate review IDs before analysis", async () => {
+    const csv = Buffer.from(
+      "review_id,product,rating,date,review_text\n" +
+      "R1,Watch,5,2024-01-01,Works well\n" +
+      "R1,Watch,2,2024-01-02,Stopped working\n",
+    );
+    const res = await request(app)
+      .post("/api/upload")
+      .attach("file", csv, "duplicate_ids.csv");
+
+    expect(res.status).toBe(400);
+    expect(res.body.error).toMatch(/unique ID/);
+    expect(analyze).not.toHaveBeenCalled();
   });
 });

@@ -64,6 +64,8 @@ describe("batchRunner", () => {
     const input = [review("R3"), review("R1"), review("R2")];
     const output = await analyzeReviews(input, { llm, sleep: async () => {} });
     expect(output.results.map((item) => item.review_id)).toEqual(["R3", "R1", "R2"]);
+    expect(output.results[0].product).toBe("P");
+    expect(output.results[0].text).toBe("Normal review");
   });
 
   it("passes skipped and duplicate reviews through without sending them", async () => {

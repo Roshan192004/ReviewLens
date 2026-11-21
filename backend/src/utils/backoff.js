@@ -1,4 +1,5 @@
 export function isRetryable(error) {
+  if (error?.code === "MISSING_API_KEY") return false;
   const status = error?.status ?? error?.statusCode ?? error?.response?.status;
   if (status === 429 || (typeof status === "number" && status >= 500)) return true;
   if (typeof status === "number") return false;

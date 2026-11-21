@@ -28,6 +28,7 @@ export async function complete({ system, user }) {
   if (!apiKey) {
     const error = new Error("GEMINI_API_KEY is not set");
     error.status = 500;
+    error.code = "MISSING_API_KEY";
     error.retryAfterMs = 0;
     throw error;
   }
